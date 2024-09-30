@@ -417,9 +417,7 @@ where
                                 let frame: FlatCallFrame = inspector
                                     .with_transaction_gas_limit(env.tx.gas_limit)
                                     .into_parity_builder()
-                                    .into_localized_transaction_traces(tx_info)
-                                    .pop()
-                                    .unwrap();
+                                    .into_localized_transaction_traces(tx_info);
                                 Ok(frame)
                             })
                             .await?;
@@ -772,9 +770,7 @@ where
                         let frame: FlatCallFrame = inspector
                             .with_transaction_gas_limit(env.tx.gas_limit)
                             .into_parity_builder()
-                            .into_localized_transaction_traces(tx_info)
-                            .pop()
-                            .unwrap();
+                            .into_localized_transaction_traces(tx_info);
 
                         return Ok((frame.into(), res.state));
                     }

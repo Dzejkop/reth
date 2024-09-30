@@ -1,4 +1,5 @@
 use super::Header;
+use alloy_consensus::serde_bincode_compat;
 use alloy_eips::BlockNumHash;
 use alloy_primitives::{keccak256, BlockHash, Sealable};
 #[cfg(any(test, feature = "test-utils"))]
@@ -9,9 +10,11 @@ use core::mem;
 use derive_more::{AsRef, Deref};
 use reth_codecs::{add_arbitrary_tests, Compact};
 use serde::{Deserialize, Serialize};
+use serde_with::serde_as;
 
 /// A [`Header`] that is sealed at a precalculated hash, use [`SealedHeader::unseal()`] if you want
 /// to modify header.
+#[serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, AsRef, Deref, Serialize, Deserialize, Compact)]
 #[add_arbitrary_tests(rlp, compact)]
 pub struct SealedHeader {
@@ -20,6 +23,7 @@ pub struct SealedHeader {
     /// Locked Header fields.
     #[as_ref]
     #[deref]
+    #[serde_as(as = "serde_bincode_compat::Header")]
     header: Header,
 }
 

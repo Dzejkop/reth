@@ -195,7 +195,7 @@ pub fn build_block<T: TransactionCompat>(
             ExecutionResult::Halt { reason, gas_used } => {
                 let error = RpcInvalidTransactionError::halt(reason, tx.gas_limit());
                 SimCallResult {
-                    return_value: Bytes::new(),
+                    return_data: Bytes::new(),
                     error: Some(SimulateError {
                         code: error.error_code(),
                         message: error.to_string(),
@@ -208,7 +208,7 @@ pub fn build_block<T: TransactionCompat>(
             ExecutionResult::Revert { output, gas_used } => {
                 let error = RevertError::new(output.clone());
                 SimCallResult {
-                    return_value: output,
+                    return_data: output,
                     error: Some(SimulateError {
                         code: error.error_code(),
                         message: error.to_string(),
@@ -219,7 +219,7 @@ pub fn build_block<T: TransactionCompat>(
                 }
             }
             ExecutionResult::Success { output, gas_used, logs, .. } => SimCallResult {
-                return_value: output.into_data(),
+                return_data: output.into_data(),
                 error: None,
                 gas_used,
                 logs: logs
