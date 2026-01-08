@@ -189,8 +189,7 @@ impl AuthenticatedTransport {
 
 fn build_auth(secret: JwtSecret) -> eyre::Result<(Authorization, Claims)> {
     // Generate claims with current timestamp and expiration 60 seconds from now.
-    // We explicitly set exp to avoid serializing it as null (which some clients like
-    // Nethermind cannot parse).
+    // We explicitly set exp to avoid serializing it as null (which some clients cannot parse).
     let iat = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
     let claims = Claims { iat, exp: Some(iat + 60) };
     let token = secret.encode(&claims)?;
