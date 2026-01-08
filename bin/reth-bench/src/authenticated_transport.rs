@@ -1,7 +1,10 @@
 //! This contains an authenticated rpc transport that can be used to send engine API newPayload
 //! requests.
 
-use std::sync::Arc;
+use std::{
+    sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use alloy_json_rpc::{RequestPacket, ResponsePacket};
 use alloy_pubsub::{PubSubConnect, PubSubFrontend};
@@ -185,9 +188,11 @@ impl AuthenticatedTransport {
 }
 
 fn build_auth(secret: JwtSecret) -> eyre::Result<(Authorization, Claims)> {
-    // Generate claims (iat with current timestamp), this happens by default using the Default trait
-    // for Claims.
-    let claims = Claims::default();
+    // Generate claims with current timestamp and expiration 60 seconds from now.
+    // We explicitly set exp to avoid serializing it as null (which some clients like
+    // Nethermind cannot parse).
+    let iat = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    let claims = Claims { iat, exp: Some(iat + 60) };
     let token = secret.encode(&claims)?;
     let auth = Authorization::Bearer(token);
 
