@@ -51,6 +51,7 @@ impl Command {
             is_optimism,
         } = BenchContext::new(&self.benchmark, self.rpc_url).await?;
 
+        let full_requests = self.benchmark.full_requests;
         let buffer_size = self.rpc_block_buffer_size;
 
         // Use a oneshot channel to propagate errors from the spawned task
@@ -102,7 +103,7 @@ impl Command {
                 "Sending payload to engine",
             );
 
-            let (version, params) = block_to_new_payload(block, is_optimism)?;
+            let (version, params) = block_to_new_payload(block, is_optimism, full_requests)?;
 
             let start = Instant::now();
             call_new_payload(&auth_provider, version, params).await?;

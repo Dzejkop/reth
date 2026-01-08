@@ -48,6 +48,14 @@ pub struct BenchmarkArgs {
     /// The path to the output directory for granular benchmark results.
     #[arg(long, short, value_name = "BENCHMARK_OUTPUT", verbatim_doc_comment)]
     pub output: Option<PathBuf>,
+
+    /// Send full execution requests instead of just the requests hash in engine_newPayloadV4.
+    ///
+    /// By default, reth-bench sends only the requests hash. Enable this flag to send the full
+    /// requests array, which is required when the target node does not have
+    /// `--engine.accept-execution-requests-hash` enabled.
+    #[arg(long, verbatim_doc_comment)]
+    pub full_requests: bool,
 }
 
 #[cfg(test)]
@@ -70,5 +78,12 @@ mod tests {
         };
         let args = CommandParser::<BenchmarkArgs>::parse_from(["reth-bench"]).args;
         assert_eq!(args, default_args);
+    }
+
+    #[test]
+    fn test_parse_full_requests_flag() {
+        let args =
+            CommandParser::<BenchmarkArgs>::parse_from(["reth-bench", "--full-requests"]).args;
+        assert!(args.full_requests);
     }
 }

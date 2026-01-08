@@ -136,6 +136,7 @@ where
 pub(crate) fn block_to_new_payload(
     block: AnyRpcBlock,
     is_optimism: bool,
+    full_requests: bool,
 ) -> eyre::Result<(EngineApiMessageVersion, serde_json::Value)> {
     let block = block
         .into_inner()
@@ -168,13 +169,18 @@ pub(crate) fn block_to_new_payload(
                         ))?,
                     )
                 } else {
+                    let requests = if full_requests {
+                        serde_json::to_value(prague.requests.clone())?
+                    } else {
+                        serde_json::to_value(prague.requests.requests_hash())?
+                    };
                     (
                         EngineApiMessageVersion::V4,
                         serde_json::to_value((
                             payload,
                             cancun.versioned_hashes.clone(),
                             cancun.parent_beacon_block_root,
-                            prague.requests.requests_hash(),
+                            requests,
                         ))?,
                     )
                 }
