@@ -10,7 +10,34 @@ use alloy_rpc_types_engine::JwtSecret;
 use alloy_transport::layers::RetryBackoffLayer;
 use reqwest::Url;
 use reth_node_core::args::BenchmarkArgs;
+use std::sync::Arc;
 use tracing::info;
+
+/// Client for fetching data from the Beacon API.
+#[derive(Debug, Clone)]
+pub(crate) struct BeaconClient {
+    /// The base URL of the beacon API.
+    base_url: Url,
+    /// HTTP client for making requests.
+    client: reqwest::Client,
+}
+
+impl BeaconClient {
+    /// Creates a new beacon client with the given base URL.
+    pub(crate) fn new(base_url: Url) -> Self {
+        Self { base_url, client: reqwest::Client::new() }
+    }
+
+    /// Returns the base URL of the beacon API.
+    pub(crate) fn base_url(&self) -> &Url {
+        &self.base_url
+    }
+
+    /// Returns the HTTP client.
+    pub(crate) fn client(&self) -> &reqwest::Client {
+        &self.client
+    }
+}
 
 /// This is intended to be used by benchmarks that replay blocks from an RPC.
 ///
@@ -29,6 +56,8 @@ pub(crate) struct BenchContext {
     pub(crate) next_block: u64,
     /// Whether the chain is an OP rollup.
     pub(crate) is_optimism: bool,
+    /// Optional beacon client for fetching execution requests.
+    pub(crate) beacon_client: Option<Arc<BeaconClient>>,
 }
 
 impl BenchContext {
@@ -140,6 +169,21 @@ impl BenchContext {
         };
 
         let next_block = first_block.header.number + 1;
-        Ok(Self { auth_provider, block_provider, benchmark_mode, next_block, is_optimism })
+
+        // Initialize beacon client if URL is provided
+        let beacon_client = bench_args.beacon_api_url.as_ref().map(|url| {
+            let beacon_url = Url::parse(url).expect("Invalid beacon API URL");
+            info!("Using Beacon API at {} for fetching execution requests", beacon_url);
+            Arc::new(BeaconClient::new(beacon_url))
+        });
+
+        Ok(Self {
+            auth_provider,
+            block_provider,
+            benchmark_mode,
+            next_block,
+            is_optimism,
+            beacon_client,
+        })
     }
 }

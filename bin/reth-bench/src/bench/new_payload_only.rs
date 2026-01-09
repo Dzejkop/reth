@@ -49,6 +49,7 @@ impl Command {
             auth_provider,
             mut next_block,
             is_optimism,
+            beacon_client,
         } = BenchContext::new(&self.benchmark, self.rpc_url).await?;
 
         let full_requests = self.benchmark.full_requests;

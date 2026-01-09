@@ -107,8 +107,14 @@ pub struct Command {
 impl Command {
     /// Execute `benchmark new-payload-fcu` command
     pub async fn execute(self, _ctx: CliContext) -> eyre::Result<()> {
-        let BenchContext { benchmark_mode, block_provider, auth_provider, next_block, is_optimism } =
-            BenchContext::new(&self.benchmark, self.rpc_url).await?;
+        let BenchContext {
+            benchmark_mode,
+            block_provider,
+            auth_provider,
+            next_block,
+            is_optimism,
+            beacon_client,
+        } = BenchContext::new(&self.benchmark, self.rpc_url).await?;
 
         let full_requests = self.benchmark.full_requests;
         let buffer_size = self.rpc_block_buffer_size;
