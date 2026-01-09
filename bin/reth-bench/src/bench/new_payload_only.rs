@@ -2,7 +2,7 @@
 
 use crate::{
     bench::{
-        context::BenchContext,
+        context::{BeaconClient, BenchContext},
         output::{
             NewPayloadResult, TotalGasOutput, TotalGasRow, GAS_OUTPUT_SUFFIX,
             NEW_PAYLOAD_OUTPUT_SUFFIX,
@@ -10,14 +10,20 @@ use crate::{
     },
     valid_payload::{block_to_new_payload, call_new_payload},
 };
+use alloy_eips::eip7685::Requests;
 use alloy_provider::Provider;
 use clap::Parser;
 use csv::Writer;
 use eyre::{Context, OptionExt};
 use reth_cli_runner::CliContext;
 use reth_node_core::args::BenchmarkArgs;
-use std::time::{Duration, Instant};
-use tracing::{debug, info};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
+use tracing::{debug, info, warn};
+
+type BlockData = (alloy_provider::network::AnyRpcBlock, Option<Requests>);
 
 /// `reth benchmark new-payload-only` command
 #[derive(Debug, Parser)]
@@ -47,7 +53,7 @@ impl Command {
             benchmark_mode,
             block_provider,
             auth_provider,
-            mut next_block,
+            next_block,
             is_optimism,
             beacon_client,
         } = BenchContext::new(&self.benchmark, self.rpc_url).await?;
@@ -57,38 +63,23 @@ impl Command {
 
         // Use a oneshot channel to propagate errors from the spawned task
         let (error_sender, mut error_receiver) = tokio::sync::oneshot::channel();
-        let (sender, mut receiver) = tokio::sync::mpsc::channel(buffer_size);
+        let (sender, mut receiver) = tokio::sync::mpsc::channel::<BlockData>(buffer_size);
 
-        tokio::task::spawn(async move {
-            while benchmark_mode.contains(next_block) {
-                let block_res = block_provider
-                    .get_block_by_number(next_block.into())
-                    .full()
-                    .await
-                    .wrap_err_with(|| format!("Failed to fetch block by number {next_block}"));
-                let block = match block_res.and_then(|opt| opt.ok_or_eyre("Block not found")) {
-                    Ok(block) => block,
-                    Err(e) => {
-                        tracing::error!("Failed to fetch block {next_block}: {e}");
-                        let _ = error_sender.send(e);
-                        break;
-                    }
-                };
-
-                next_block += 1;
-                if let Err(e) = sender.send(block).await {
-                    tracing::error!("Failed to send block data: {e}");
-                    break;
-                }
-            }
-        });
+        tokio::task::spawn(fetch_blocks(
+            block_provider,
+            benchmark_mode,
+            next_block,
+            sender,
+            error_sender,
+            beacon_client,
+        ));
 
         // put results in a summary vec so they can be printed at the end
         let mut results = Vec::new();
         let total_benchmark_duration = Instant::now();
         let mut total_wait_time = Duration::ZERO;
 
-        while let Some(block) = {
+        while let Some((block, execution_requests)) = {
             let wait_start = Instant::now();
             let result = receiver.recv().await;
             total_wait_time += wait_start.elapsed();
@@ -104,8 +95,8 @@ impl Command {
                 "Sending payload to engine",
             );
 
-            // TODO: Add beacon API support for fetching execution requests
-            let (version, params) = block_to_new_payload(block, is_optimism, full_requests, None)?;
+            let (version, params) =
+                block_to_new_payload(block, is_optimism, full_requests, execution_requests)?;
 
             let start = Instant::now();
             call_new_payload(&auth_provider, version, params).await?;
@@ -165,5 +156,58 @@ impl Command {
         );
 
         Ok(())
+    }
+}
+
+/// Fetches blocks from RPC and sends them through the channel.
+async fn fetch_blocks(
+    block_provider: alloy_provider::RootProvider<alloy_provider::network::AnyNetwork>,
+    benchmark_mode: crate::bench_mode::BenchMode,
+    mut next_block: u64,
+    sender: tokio::sync::mpsc::Sender<BlockData>,
+    error_sender: tokio::sync::oneshot::Sender<eyre::Report>,
+    beacon_client: Option<Arc<BeaconClient>>,
+) {
+    while benchmark_mode.contains(next_block) {
+        let block_res = block_provider
+            .get_block_by_number(next_block.into())
+            .full()
+            .await
+            .wrap_err_with(|| format!("Failed to fetch block by number {next_block}"));
+        let block = match block_res.and_then(|opt| opt.ok_or_eyre("Block not found")) {
+            Ok(block) => block,
+            Err(e) => {
+                tracing::error!("Failed to fetch block {next_block}: {e}");
+                let _ = error_sender.send(e);
+                break;
+            }
+        };
+
+        // Fetch execution requests from beacon API if available
+        let execution_requests = if let Some(ref beacon) = beacon_client {
+            // Convert block timestamp to slot number
+            // Slot = (timestamp - genesis_time) / 12
+            // For mainnet, genesis_time is 1606824023 (Dec 1, 2020)
+            const GENESIS_TIME: u64 = 1606824023;
+            const SLOT_DURATION: u64 = 12;
+
+            let slot = (block.header.timestamp.saturating_sub(GENESIS_TIME)) / SLOT_DURATION;
+
+            match beacon.get_execution_requests(slot).await {
+                Ok(requests) => requests,
+                Err(e) => {
+                    warn!("Failed to fetch execution requests for slot {slot}: {e}");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        next_block += 1;
+        if let Err(e) = sender.send((block, execution_requests)).await {
+            tracing::error!("Failed to send block data: {e}");
+            break;
+        }
     }
 }
