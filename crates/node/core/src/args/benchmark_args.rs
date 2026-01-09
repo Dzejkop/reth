@@ -54,8 +54,17 @@ pub struct BenchmarkArgs {
     /// By default, reth-bench sends only the requests hash. Enable this flag to send the full
     /// requests array, which is required when the target node does not have
     /// `--engine.accept-execution-requests-hash` enabled.
-    #[arg(long, verbatim_doc_comment)]
+    ///
+    /// Requires --beacon-api-url to fetch execution requests from the beacon chain.
+    #[arg(long, verbatim_doc_comment, requires = "beacon_api_url")]
     pub full_requests: bool,
+
+    /// Beacon API URL for fetching execution requests when --full-requests is enabled.
+    ///
+    /// The beacon API is used to fetch the full execution requests data from beacon blocks,
+    /// since the execution layer only stores the requests hash.
+    #[arg(long, value_name = "BEACON_API_URL", verbatim_doc_comment)]
+    pub beacon_api_url: Option<String>,
 }
 
 #[cfg(test)]
@@ -82,8 +91,14 @@ mod tests {
 
     #[test]
     fn test_parse_full_requests_flag() {
-        let args =
-            CommandParser::<BenchmarkArgs>::parse_from(["reth-bench", "--full-requests"]).args;
+        let args = CommandParser::<BenchmarkArgs>::parse_from([
+            "reth-bench",
+            "--full-requests",
+            "--beacon-api-url",
+            "http://localhost:5052",
+        ])
+        .args;
         assert!(args.full_requests);
+        assert_eq!(args.beacon_api_url, Some("http://localhost:5052".to_string()));
     }
 }
