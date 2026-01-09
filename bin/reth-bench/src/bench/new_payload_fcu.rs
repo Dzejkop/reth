@@ -3,114 +3,22 @@
 
 use crate::{
     bench::{
-        context::{BeaconClient, BenchContext},
+        context::{fetch_blocks, BenchContext, BlockData},
         output::{
             CombinedResult, NewPayloadResult, TotalGasOutput, TotalGasRow, COMBINED_OUTPUT_SUFFIX,
             GAS_OUTPUT_SUFFIX,
         },
     },
-    bench_mode::BenchMode,
     valid_payload::{block_to_new_payload, call_forkchoice_updated, call_new_payload},
 };
-use alloy_eips::eip7685::Requests;
-use alloy_primitives::B256;
-use alloy_provider::{network::AnyNetwork, Provider, RootProvider};
 use alloy_rpc_types_engine::ForkchoiceState;
 use clap::Parser;
 use csv::Writer;
-use eyre::{Context, OptionExt};
 use humantime::parse_duration;
 use reth_cli_runner::CliContext;
 use reth_node_core::args::BenchmarkArgs;
-use std::{
-    sync::Arc,
-    time::{Duration, Instant},
-};
-use tokio::sync::{mpsc, oneshot};
-use tracing::{debug, info, warn};
-
-type BlockData = (alloy_provider::network::AnyRpcBlock, B256, B256, B256, Option<Requests>);
-
-/// Fetches blocks from RPC and sends them through the channel.
-async fn fetch_blocks(
-    block_provider: RootProvider<AnyNetwork>,
-    benchmark_mode: BenchMode,
-    mut next_block: u64,
-    sender: mpsc::Sender<BlockData>,
-    error_sender: oneshot::Sender<eyre::Report>,
-    beacon_client: Option<Arc<BeaconClient>>,
-) {
-    while benchmark_mode.contains(next_block) {
-        let block_res = block_provider
-            .get_block_by_number(next_block.into())
-            .full()
-            .await
-            .wrap_err_with(|| format!("Failed to fetch block by number {next_block}"));
-        let block = match block_res.and_then(|opt| opt.ok_or_eyre("Block not found")) {
-            Ok(block) => block,
-            Err(e) => {
-                tracing::error!("Failed to fetch block {next_block}: {e}");
-                let _ = error_sender.send(e);
-                break;
-            }
-        };
-
-        let head_block_hash = block.header.hash;
-        let safe_block_hash =
-            block_provider.get_block_by_number(block.header.number.saturating_sub(32).into());
-
-        let finalized_block_hash =
-            block_provider.get_block_by_number(block.header.number.saturating_sub(64).into());
-
-        let (safe, finalized) = tokio::join!(safe_block_hash, finalized_block_hash);
-
-        let safe_block_hash = match safe {
-            Ok(Some(block)) => block.header.hash,
-            Ok(None) | Err(_) => head_block_hash,
-        };
-
-        let finalized_block_hash = match finalized {
-            Ok(Some(block)) => block.header.hash,
-            Ok(None) | Err(_) => head_block_hash,
-        };
-
-        // Fetch execution requests from beacon API if available
-        let execution_requests = if let Some(ref beacon) = beacon_client {
-            // Convert block timestamp to slot number
-            // Slot = (timestamp - genesis_time) / 12
-            // For mainnet, genesis_time is 1606824023 (Dec 1, 2020)
-            const GENESIS_TIME: u64 = 1606824023;
-            const SLOT_DURATION: u64 = 12;
-
-            let slot = (block.header.timestamp.saturating_sub(GENESIS_TIME)) / SLOT_DURATION;
-
-            match beacon.get_execution_requests(slot).await {
-                Ok(requests) => requests,
-                Err(e) => {
-                    warn!("Failed to fetch execution requests for slot {slot}: {e}");
-                    None
-                }
-            }
-        } else {
-            None
-        };
-
-        next_block += 1;
-        if let Err(e) = sender
-            .send((
-                block,
-                head_block_hash,
-                safe_block_hash,
-                finalized_block_hash,
-                execution_requests,
-            ))
-            .await
-        {
-            tracing::error!("Failed to send block data: {e}");
-            break;
-        }
-    }
-}
+use std::time::{Duration, Instant};
+use tracing::{debug, info};
 
 /// `reth benchmark new-payload-fcu` command
 #[derive(Debug, Parser)]
@@ -154,7 +62,7 @@ impl Command {
 
         // Use a oneshot channel to propagate errors from the spawned task
         let (error_sender, mut error_receiver) = tokio::sync::oneshot::channel();
-        let (sender, mut receiver) = tokio::sync::mpsc::channel(buffer_size);
+        let (sender, mut receiver) = tokio::sync::mpsc::channel::<BlockData>(buffer_size);
 
         tokio::task::spawn(fetch_blocks(
             block_provider,

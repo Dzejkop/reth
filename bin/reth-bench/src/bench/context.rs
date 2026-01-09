@@ -3,16 +3,18 @@
 
 use crate::{authenticated_transport::AuthenticatedTransportConnect, bench_mode::BenchMode};
 use alloy_eips::{eip7685::Requests, BlockNumberOrTag};
-use alloy_primitives::{address, Bytes};
+use alloy_primitives::{address, Bytes, B256};
 use alloy_provider::{network::AnyNetwork, Provider, RootProvider};
 use alloy_rpc_client::ClientBuilder;
 use alloy_rpc_types_engine::JwtSecret;
 use alloy_transport::layers::RetryBackoffLayer;
+use eyre::{Context, OptionExt};
 use reqwest::Url;
 use reth_node_core::args::BenchmarkArgs;
 use serde::Deserialize;
 use std::sync::Arc;
-use tracing::info;
+use tokio::sync::{mpsc, oneshot};
+use tracing::{info, warn};
 
 /// Client for fetching data from the Beacon API.
 #[derive(Debug, Clone)]
@@ -245,5 +247,98 @@ impl BenchContext {
             is_optimism,
             beacon_client,
         })
+    }
+}
+
+/// Block data fetched for benchmarking, including forkchoice state hashes.
+pub(crate) type BlockData = (
+    alloy_provider::network::AnyRpcBlock,
+    B256,             // head_block_hash
+    B256,             // safe_block_hash
+    B256,             // finalized_block_hash
+    Option<Requests>, // execution_requests
+);
+
+/// Fetches blocks from RPC and sends them through the channel.
+///
+/// For each block, also fetches approximate safe (head - 32) and finalized (head - 64) block
+/// hashes for forkchoice state construction.
+pub(crate) async fn fetch_blocks(
+    block_provider: RootProvider<AnyNetwork>,
+    benchmark_mode: BenchMode,
+    mut next_block: u64,
+    sender: mpsc::Sender<BlockData>,
+    error_sender: oneshot::Sender<eyre::Report>,
+    beacon_client: Option<Arc<BeaconClient>>,
+) {
+    while benchmark_mode.contains(next_block) {
+        let block_res = block_provider
+            .get_block_by_number(next_block.into())
+            .full()
+            .await
+            .wrap_err_with(|| format!("Failed to fetch block by number {next_block}"));
+        let block = match block_res.and_then(|opt| opt.ok_or_eyre("Block not found")) {
+            Ok(block) => block,
+            Err(e) => {
+                tracing::error!("Failed to fetch block {next_block}: {e}");
+                let _ = error_sender.send(e);
+                break;
+            }
+        };
+
+        let head_block_hash = block.header.hash;
+        let safe_block_hash =
+            block_provider.get_block_by_number(block.header.number.saturating_sub(32).into());
+
+        let finalized_block_hash =
+            block_provider.get_block_by_number(block.header.number.saturating_sub(64).into());
+
+        let (safe, finalized) = tokio::join!(safe_block_hash, finalized_block_hash);
+
+        let safe_block_hash = match safe {
+            Ok(Some(block)) => block.header.hash,
+            Ok(None) | Err(_) => head_block_hash,
+        };
+
+        let finalized_block_hash = match finalized {
+            Ok(Some(block)) => block.header.hash,
+            Ok(None) | Err(_) => head_block_hash,
+        };
+
+        // Fetch execution requests from beacon API if available
+        let execution_requests = if let Some(ref beacon) = beacon_client {
+            // Convert block timestamp to slot number
+            // Slot = (timestamp - genesis_time) / 12
+            // For mainnet, genesis_time is 1606824023 (Dec 1, 2020)
+            const GENESIS_TIME: u64 = 1606824023;
+            const SLOT_DURATION: u64 = 12;
+
+            let slot = (block.header.timestamp.saturating_sub(GENESIS_TIME)) / SLOT_DURATION;
+
+            match beacon.get_execution_requests(slot).await {
+                Ok(requests) => requests,
+                Err(e) => {
+                    warn!("Failed to fetch execution requests for slot {slot}: {e}");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        next_block += 1;
+        if let Err(e) = sender
+            .send((
+                block,
+                head_block_hash,
+                safe_block_hash,
+                finalized_block_hash,
+                execution_requests,
+            ))
+            .await
+        {
+            tracing::error!("Failed to send block data: {e}");
+            break;
+        }
     }
 }
