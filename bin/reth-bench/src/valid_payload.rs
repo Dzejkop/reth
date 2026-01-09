@@ -173,10 +173,8 @@ pub(crate) fn block_to_new_payload(
                     let requests = if full_requests {
                         // Use execution requests from beacon API if provided
                         if let Some(ref reqs) = execution_requests {
-                            info!("Sending full requests from beacon API");
                             serde_json::to_value(reqs)?
                         } else {
-                            info!("Sending full requests from sidecar");
                             serde_json::to_value(prague.requests.clone())?
                         }
                     } else {
