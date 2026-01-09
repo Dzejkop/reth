@@ -11,7 +11,7 @@ use alloy_rpc_types_engine::{
 use alloy_transport::TransportResult;
 use op_alloy_rpc_types_engine::OpExecutionPayloadV4;
 use reth_node_api::EngineApiMessageVersion;
-use tracing::{info, error};
+use tracing::{error, info};
 
 /// An extension trait for providers that implement the engine API, to wait for a VALID response.
 #[async_trait::async_trait]
@@ -137,6 +137,7 @@ pub(crate) fn block_to_new_payload(
     block: AnyRpcBlock,
     is_optimism: bool,
     full_requests: bool,
+    execution_requests: Option<Requests>,
 ) -> eyre::Result<(EngineApiMessageVersion, serde_json::Value)> {
     let block = block
         .into_inner()
@@ -170,8 +171,14 @@ pub(crate) fn block_to_new_payload(
                     )
                 } else {
                     let requests = if full_requests {
-                        info!("Sending full requests instead of hash");
-                        serde_json::to_value(prague.requests.clone())?
+                        // Use execution requests from beacon API if provided
+                        if let Some(ref reqs) = execution_requests {
+                            info!("Sending full requests from beacon API");
+                            serde_json::to_value(reqs)?
+                        } else {
+                            info!("Sending full requests from sidecar");
+                            serde_json::to_value(prague.requests.clone())?
+                        }
                     } else {
                         serde_json::to_value(prague.requests.requests_hash())?
                     };

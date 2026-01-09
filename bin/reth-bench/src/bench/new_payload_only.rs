@@ -104,7 +104,8 @@ impl Command {
                 "Sending payload to engine",
             );
 
-            let (version, params) = block_to_new_payload(block, is_optimism, full_requests)?;
+            // TODO: Add beacon API support for fetching execution requests
+            let (version, params) = block_to_new_payload(block, is_optimism, full_requests, None)?;
 
             let start = Instant::now();
             call_new_payload(&auth_provider, version, params).await?;

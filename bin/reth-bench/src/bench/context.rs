@@ -2,14 +2,15 @@
 //! The initialization code is also the same, so this can be shared across benchmark commands.
 
 use crate::{authenticated_transport::AuthenticatedTransportConnect, bench_mode::BenchMode};
-use alloy_eips::BlockNumberOrTag;
-use alloy_primitives::address;
+use alloy_eips::{eip7685::Requests, BlockNumberOrTag};
+use alloy_primitives::{address, Bytes};
 use alloy_provider::{network::AnyNetwork, Provider, RootProvider};
 use alloy_rpc_client::ClientBuilder;
 use alloy_rpc_types_engine::JwtSecret;
 use alloy_transport::layers::RetryBackoffLayer;
 use reqwest::Url;
 use reth_node_core::args::BenchmarkArgs;
+use serde::Deserialize;
 use std::sync::Arc;
 use tracing::info;
 
@@ -22,20 +23,79 @@ pub(crate) struct BeaconClient {
     client: reqwest::Client,
 }
 
+/// Response wrapper for beacon API responses.
+#[derive(Debug, Deserialize)]
+struct BeaconResponse<T> {
+    data: T,
+}
+
+/// Beacon block response from the API.
+#[derive(Debug, Deserialize)]
+struct BeaconBlock {
+    message: BeaconBlockMessage,
+}
+
+/// Beacon block message containing the body.
+#[derive(Debug, Deserialize)]
+struct BeaconBlockMessage {
+    body: BeaconBlockBody,
+}
+
+/// Beacon block body containing execution requests.
+#[derive(Debug, Deserialize)]
+struct BeaconBlockBody {
+    /// Execution requests (only present in Electra+)
+    #[serde(default)]
+    execution_requests: Option<ExecutionRequestsResponse>,
+}
+
+/// Execution requests as returned by the beacon API.
+#[derive(Debug, Deserialize)]
+struct ExecutionRequestsResponse {
+    deposits: Vec<Bytes>,
+    withdrawals: Vec<Bytes>,
+    consolidations: Vec<Bytes>,
+}
+
 impl BeaconClient {
     /// Creates a new beacon client with the given base URL.
     pub(crate) fn new(base_url: Url) -> Self {
         Self { base_url, client: reqwest::Client::new() }
     }
 
-    /// Returns the base URL of the beacon API.
-    pub(crate) fn base_url(&self) -> &Url {
-        &self.base_url
-    }
+    /// Fetches execution requests for a given slot from the beacon API.
+    pub(crate) async fn get_execution_requests(&self, slot: u64) -> eyre::Result<Option<Requests>> {
+        let url = format!("{}/eth/v2/beacon/blocks/{}", self.base_url, slot);
 
-    /// Returns the HTTP client.
-    pub(crate) fn client(&self) -> &reqwest::Client {
-        &self.client
+        let response = self.client.get(&url).header("Accept", "application/json").send().await?;
+
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+
+        let response = response.error_for_status()?;
+        let beacon_response: BeaconResponse<BeaconBlock> = response.json().await?;
+
+        let Some(execution_requests) = beacon_response.data.message.body.execution_requests else {
+            return Ok(None);
+        };
+
+        // Combine all requests into a single Requests object
+        // Each request type is prefixed with its type byte (0x00 for deposits, 0x01 for
+        // withdrawals, 0x02 for consolidations)
+        let mut all_requests = Vec::new();
+
+        for deposit in execution_requests.deposits {
+            all_requests.push(deposit);
+        }
+        for withdrawal in execution_requests.withdrawals {
+            all_requests.push(withdrawal);
+        }
+        for consolidation in execution_requests.consolidations {
+            all_requests.push(consolidation);
+        }
+
+        Ok(Some(all_requests.into()))
     }
 }
 

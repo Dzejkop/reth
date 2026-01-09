@@ -3,7 +3,7 @@
 
 use crate::{
     bench::{
-        context::BenchContext,
+        context::{BeaconClient, BenchContext},
         output::{
             CombinedResult, NewPayloadResult, TotalGasOutput, TotalGasRow, COMBINED_OUTPUT_SUFFIX,
             GAS_OUTPUT_SUFFIX,
@@ -12,6 +12,7 @@ use crate::{
     bench_mode::BenchMode,
     valid_payload::{block_to_new_payload, call_forkchoice_updated, call_new_payload},
 };
+use alloy_eips::eip7685::Requests;
 use alloy_primitives::B256;
 use alloy_provider::{network::AnyNetwork, Provider, RootProvider};
 use alloy_rpc_types_engine::ForkchoiceState;
@@ -21,11 +22,14 @@ use eyre::{Context, OptionExt};
 use humantime::parse_duration;
 use reth_cli_runner::CliContext;
 use reth_node_core::args::BenchmarkArgs;
-use std::time::{Duration, Instant};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use tokio::sync::{mpsc, oneshot};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
-type BlockData = (alloy_provider::network::AnyRpcBlock, B256, B256, B256);
+type BlockData = (alloy_provider::network::AnyRpcBlock, B256, B256, B256, Option<Requests>);
 
 /// Fetches blocks from RPC and sends them through the channel.
 async fn fetch_blocks(
@@ -34,6 +38,7 @@ async fn fetch_blocks(
     mut next_block: u64,
     sender: mpsc::Sender<BlockData>,
     error_sender: oneshot::Sender<eyre::Report>,
+    beacon_client: Option<Arc<BeaconClient>>,
 ) {
     while benchmark_mode.contains(next_block) {
         let block_res = block_provider
@@ -69,9 +74,37 @@ async fn fetch_blocks(
             Ok(None) | Err(_) => head_block_hash,
         };
 
+        // Fetch execution requests from beacon API if available
+        let execution_requests = if let Some(ref beacon) = beacon_client {
+            // Convert block timestamp to slot number
+            // Slot = (timestamp - genesis_time) / 12
+            // For mainnet, genesis_time is 1606824023 (Dec 1, 2020)
+            const GENESIS_TIME: u64 = 1606824023;
+            const SLOT_DURATION: u64 = 12;
+
+            let slot = (block.header.timestamp.saturating_sub(GENESIS_TIME)) / SLOT_DURATION;
+
+            match beacon.get_execution_requests(slot).await {
+                Ok(requests) => requests,
+                Err(e) => {
+                    warn!("Failed to fetch execution requests for slot {slot}: {e}");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         next_block += 1;
-        if let Err(e) =
-            sender.send((block, head_block_hash, safe_block_hash, finalized_block_hash)).await
+        if let Err(e) = sender
+            .send((
+                block,
+                head_block_hash,
+                safe_block_hash,
+                finalized_block_hash,
+                execution_requests,
+            ))
+            .await
         {
             tracing::error!("Failed to send block data: {e}");
             break;
@@ -129,6 +162,7 @@ impl Command {
             next_block,
             sender,
             error_sender,
+            beacon_client,
         ));
 
         // put results in a summary vec so they can be printed at the end
@@ -136,7 +170,7 @@ impl Command {
         let total_benchmark_duration = Instant::now();
         let mut total_wait_time = Duration::ZERO;
 
-        while let Some((block, head, safe, finalized)) = {
+        while let Some((block, head, safe, finalized, execution_requests)) = {
             let wait_start = Instant::now();
             let result = receiver.recv().await;
             total_wait_time += wait_start.elapsed();
@@ -156,7 +190,8 @@ impl Command {
                 finalized_block_hash: finalized,
             };
 
-            let (version, params) = block_to_new_payload(block, is_optimism, full_requests)?;
+            let (version, params) =
+                block_to_new_payload(block, is_optimism, full_requests, execution_requests)?;
             let start = Instant::now();
             call_new_payload(&auth_provider, version, params).await?;
 
