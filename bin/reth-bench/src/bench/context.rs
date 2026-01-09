@@ -251,13 +251,13 @@ impl BenchContext {
 }
 
 /// Block data fetched for benchmarking, including forkchoice state hashes.
-pub(crate) type BlockData = (
-    alloy_provider::network::AnyRpcBlock,
-    B256,             // head_block_hash
-    B256,             // safe_block_hash
-    B256,             // finalized_block_hash
-    Option<Requests>, // execution_requests
-);
+pub(crate) struct BlockData {
+    pub(crate) block: alloy_provider::network::AnyRpcBlock,
+    pub(crate) head_block_hash: B256,
+    pub(crate) safe_block_hash: B256,
+    pub(crate) finalized_block_hash: B256,
+    pub(crate) execution_requests: Option<Requests>,
+}
 
 /// Fetches blocks from RPC and sends them through the channel.
 ///
@@ -328,13 +328,13 @@ pub(crate) async fn fetch_blocks(
 
         next_block += 1;
         if let Err(e) = sender
-            .send((
+            .send(BlockData {
                 block,
                 head_block_hash,
                 safe_block_hash,
                 finalized_block_hash,
                 execution_requests,
-            ))
+            })
             .await
         {
             tracing::error!("Failed to send block data: {e}");

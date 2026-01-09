@@ -78,7 +78,13 @@ impl Command {
         let total_benchmark_duration = Instant::now();
         let mut total_wait_time = Duration::ZERO;
 
-        while let Some((block, head, safe, finalized, execution_requests)) = {
+        while let Some(BlockData {
+            block,
+            head_block_hash: head,
+            safe_block_hash: safe,
+            finalized_block_hash: finalized,
+            execution_requests,
+        }) = {
             let wait_start = Instant::now();
             let result = receiver.recv().await;
             total_wait_time += wait_start.elapsed();
