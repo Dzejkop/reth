@@ -11,7 +11,7 @@ use alloy_rpc_types_engine::{
 use alloy_transport::TransportResult;
 use op_alloy_rpc_types_engine::OpExecutionPayloadV4;
 use reth_node_api::EngineApiMessageVersion;
-use tracing::{error, info};
+use tracing::error;
 
 /// An extension trait for providers that implement the engine API, to wait for a VALID response.
 #[async_trait::async_trait]
