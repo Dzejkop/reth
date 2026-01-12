@@ -175,7 +175,10 @@ pub(crate) fn block_to_new_payload(
                         if let Some(ref reqs) = execution_requests {
                             serde_json::to_value(reqs)?
                         } else {
-                            serde_json::to_value(prague.requests.clone())?
+                            // Beacon API didn't return requests - send empty array.
+                            // This happens when the beacon block has no execution_requests
+                            // (e.g., pre-Electra or empty requests for that block).
+                            serde_json::to_value(Requests::default())?
                         }
                     } else {
                         serde_json::to_value(prague.requests.requests_hash())?

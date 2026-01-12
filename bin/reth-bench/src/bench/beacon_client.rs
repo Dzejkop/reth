@@ -182,3 +182,94 @@ impl BeaconClient {
         Ok(Some(all_requests))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Test fetching execution requests for block 22830127.
+    /// Run with: cargo test -p reth-bench test_fetch_block_22830127 -- --nocapture --ignored
+    #[tokio::test]
+    #[ignore = "requires beacon API access"]
+    async fn test_fetch_block_22830127() {
+        // Block 22830127 details from mainnet
+        let block_number = 22830127u64;
+        let block_timestamp = 1736683583u64; // You may need to adjust this
+
+        let beacon_url = std::env::var("BEACON_API_URL")
+            .unwrap_or_else(|_| "http://localhost:5052".to_string());
+
+        println!("Connecting to beacon API at: {}", beacon_url);
+
+        let client = BeaconClient::new(beacon_url.parse().unwrap()).await.unwrap();
+
+        println!("Genesis time: {}", client.genesis_time);
+
+        let slot = client.timestamp_to_slot(block_timestamp);
+        println!("Calculated slot for block {}: {}", block_number, slot);
+
+        // Fetch raw beacon block to inspect
+        let url = format!("{}/eth/v2/beacon/blocks/{}", client.base_url, slot);
+        println!("Fetching: {}", url);
+
+        let response = client
+            .client
+            .get(&url)
+            .header("Accept", "application/json")
+            .send()
+            .await
+            .unwrap();
+
+        let raw_json: serde_json::Value = response.json().await.unwrap();
+
+        // Print execution_requests from raw JSON
+        if let Some(exec_requests) = raw_json
+            .get("data")
+            .and_then(|d| d.get("message"))
+            .and_then(|m| m.get("body"))
+            .and_then(|b| b.get("execution_requests"))
+        {
+            println!("\n=== Raw execution_requests from beacon API ===");
+            println!("{}", serde_json::to_string_pretty(exec_requests).unwrap());
+
+            if let Some(deposits) = exec_requests.get("deposits") {
+                println!("\nDeposits count: {}", deposits.as_array().map(|a| a.len()).unwrap_or(0));
+            }
+            if let Some(withdrawals) = exec_requests.get("withdrawals") {
+                println!("Withdrawals count: {}", withdrawals.as_array().map(|a| a.len()).unwrap_or(0));
+            }
+            if let Some(consolidations) = exec_requests.get("consolidations") {
+                println!("Consolidations count: {}", consolidations.as_array().map(|a| a.len()).unwrap_or(0));
+            }
+        } else {
+            println!("No execution_requests in beacon block");
+        }
+
+        // Now test our actual fetching logic
+        println!("\n=== Testing get_execution_requests ===");
+        let requests = client.get_execution_requests(block_number, block_timestamp).await.unwrap();
+
+        match requests {
+            Some(reqs) => {
+                println!("Got {} requests", reqs.len());
+
+                // Serialize to see what we'd send to engine API
+                let serialized = serde_json::to_value(&reqs).unwrap();
+                println!("\n=== Serialized Requests for engine API ===");
+                println!("{}", serde_json::to_string_pretty(&serialized).unwrap());
+
+                // Check each request's first byte (type)
+                for (i, req) in reqs.iter().enumerate() {
+                    if !req.is_empty() {
+                        println!("Request {}: type=0x{:02x}, len={}", i, req[0], req.len());
+                    } else {
+                        println!("Request {}: EMPTY!", i);
+                    }
+                }
+            }
+            None => {
+                println!("No execution requests found for block {}", block_number);
+            }
+        }
+    }
+}
