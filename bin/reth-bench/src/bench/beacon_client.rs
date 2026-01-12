@@ -1,9 +1,14 @@
 //! Beacon API client for fetching execution requests.
 
-use alloy_eips::eip7685::Requests;
-use alloy_primitives::Bytes;
+use alloy_eips::{
+    eip6110::{DepositRequest, DEPOSIT_REQUEST_TYPE},
+    eip7002::{WithdrawalRequest, WITHDRAWAL_REQUEST_TYPE},
+    eip7251::{ConsolidationRequest, CONSOLIDATION_REQUEST_TYPE},
+    eip7685::Requests,
+};
 use reqwest::Url;
 use serde::Deserialize;
+use ssz::Encode;
 use tracing::{info, warn};
 
 /// Client for fetching data from the Beacon API.
@@ -68,9 +73,12 @@ struct ExecutionPayload {
 /// Execution requests as returned by the beacon API.
 #[derive(Debug, Deserialize)]
 struct ExecutionRequestsResponse {
-    deposits: Vec<Bytes>,
-    withdrawals: Vec<Bytes>,
-    consolidations: Vec<Bytes>,
+    #[serde(default)]
+    deposits: Vec<DepositRequest>,
+    #[serde(default)]
+    withdrawals: Vec<WithdrawalRequest>,
+    #[serde(default)]
+    consolidations: Vec<ConsolidationRequest>,
 }
 
 /// Deserialize a u64 from a quoted decimal string (beacon API format).
@@ -84,13 +92,18 @@ where
 
 impl BeaconClient {
     /// Creates a new beacon client, fetching genesis time from the beacon node.
-    pub(crate) async fn new(base_url: Url) -> eyre::Result<Self> {
+    pub(crate) async fn new(mut base_url: Url) -> eyre::Result<Self> {
         let client = reqwest::Client::new();
 
+        // Ensure base URL ends with / for proper path joining
+        if !base_url.path().ends_with('/') {
+            base_url.set_path(&format!("{}/", base_url.path()));
+        }
+
         // Fetch genesis time from beacon node
-        let genesis_url = format!("{}/eth/v1/beacon/genesis", base_url);
+        let genesis_url = base_url.join("eth/v1/beacon/genesis")?;
         let response = client
-            .get(&genesis_url)
+            .get(genesis_url)
             .header("Accept", "application/json")
             .send()
             .await?
@@ -144,9 +157,10 @@ impl BeaconClient {
         slot: u64,
         expected_block_number: u64,
     ) -> eyre::Result<Option<Requests>> {
-        let url = format!("{}/eth/v2/beacon/blocks/{}", self.base_url, slot);
+        let url = self.base_url.join(&format!("eth/v2/beacon/blocks/{}", slot))?;
 
-        let response = self.client.get(&url).header("Accept", "application/json").send().await?;
+        let response =
+            self.client.get(url.clone()).header("Accept", "application/json").send().await?;
 
         if response.status() == reqwest::StatusCode::NOT_FOUND {
             return Ok(None);
@@ -166,17 +180,18 @@ impl BeaconClient {
         };
 
         // Combine all requests into a single Requests object with type prefixes.
-        // Beacon API returns requests without type prefixes (implicit from array),
-        // but engine API expects each request prefixed with its type byte.
+        // Beacon API returns structured objects, engine API expects SSZ-encoded bytes
+        // with type prefix.
         let mut all_requests = Requests::default();
-        for deposit in execution_requests.deposits {
-            all_requests.push_request_with_type(0x00, deposit);
+        for deposit in &execution_requests.deposits {
+            all_requests.push_request_with_type(DEPOSIT_REQUEST_TYPE, deposit.as_ssz_bytes());
         }
-        for withdrawal in execution_requests.withdrawals {
-            all_requests.push_request_with_type(0x01, withdrawal);
+        for withdrawal in &execution_requests.withdrawals {
+            all_requests.push_request_with_type(WITHDRAWAL_REQUEST_TYPE, withdrawal.as_ssz_bytes());
         }
-        for consolidation in execution_requests.consolidations {
-            all_requests.push_request_with_type(0x02, consolidation);
+        for consolidation in &execution_requests.consolidations {
+            all_requests
+                .push_request_with_type(CONSOLIDATION_REQUEST_TYPE, consolidation.as_ssz_bytes());
         }
 
         Ok(Some(all_requests))
@@ -192,83 +207,51 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires beacon API access"]
     async fn test_fetch_block_22830127() {
-        // Block 22830127 details from mainnet
+        // Block 22830127 details from mainnet (slot 12051519 from etherscan)
         let block_number = 22830127u64;
-        let block_timestamp = 1736683583u64; // You may need to adjust this
+        let slot = 12051519u64;
 
-        let beacon_url = std::env::var("BEACON_API_URL")
-            .unwrap_or_else(|_| "http://localhost:5052".to_string());
+        let beacon_url =
+            std::env::var("BEACON_API_URL").unwrap_or_else(|_| "http://localhost:5052".to_string());
 
-        println!("Connecting to beacon API at: {}", beacon_url);
+        println!("Fetching slot {} for block {} from {}", slot, block_number, beacon_url);
 
         let client = BeaconClient::new(beacon_url.parse().unwrap()).await.unwrap();
 
-        println!("Genesis time: {}", client.genesis_time);
-
-        let slot = client.timestamp_to_slot(block_timestamp);
-        println!("Calculated slot for block {}: {}", block_number, slot);
-
-        // Fetch raw beacon block to inspect
-        let url = format!("{}/eth/v2/beacon/blocks/{}", client.base_url, slot);
-        println!("Fetching: {}", url);
-
-        let response = client
+        // First fetch raw JSON to see actual structure
+        let url = client.base_url.join(&format!("eth/v2/beacon/blocks/{}", slot)).unwrap();
+        let raw: serde_json::Value = client
             .client
-            .get(&url)
+            .get(url)
             .header("Accept", "application/json")
             .send()
             .await
+            .unwrap()
+            .json()
+            .await
             .unwrap();
 
-        let raw_json: serde_json::Value = response.json().await.unwrap();
-
-        // Print execution_requests from raw JSON
-        if let Some(exec_requests) = raw_json
+        if let Some(exec_req) = raw
             .get("data")
             .and_then(|d| d.get("message"))
             .and_then(|m| m.get("body"))
             .and_then(|b| b.get("execution_requests"))
         {
-            println!("\n=== Raw execution_requests from beacon API ===");
-            println!("{}", serde_json::to_string_pretty(exec_requests).unwrap());
-
-            if let Some(deposits) = exec_requests.get("deposits") {
-                println!("\nDeposits count: {}", deposits.as_array().map(|a| a.len()).unwrap_or(0));
-            }
-            if let Some(withdrawals) = exec_requests.get("withdrawals") {
-                println!("Withdrawals count: {}", withdrawals.as_array().map(|a| a.len()).unwrap_or(0));
-            }
-            if let Some(consolidations) = exec_requests.get("consolidations") {
-                println!("Consolidations count: {}", consolidations.as_array().map(|a| a.len()).unwrap_or(0));
-            }
+            println!("\n=== execution_requests structure ===");
+            println!("{}", serde_json::to_string_pretty(exec_req).unwrap());
         } else {
-            println!("No execution_requests in beacon block");
+            println!("No execution_requests field found");
         }
 
-        // Now test our actual fetching logic
-        println!("\n=== Testing get_execution_requests ===");
-        let requests = client.get_execution_requests(block_number, block_timestamp).await.unwrap();
+        let requests = client.try_fetch_requests(slot, block_number).await;
+        println!("\nResult: {:?}", requests);
 
-        match requests {
-            Some(reqs) => {
-                println!("Got {} requests", reqs.len());
-
-                // Serialize to see what we'd send to engine API
-                let serialized = serde_json::to_value(&reqs).unwrap();
-                println!("\n=== Serialized Requests for engine API ===");
-                println!("{}", serde_json::to_string_pretty(&serialized).unwrap());
-
-                // Check each request's first byte (type)
-                for (i, req) in reqs.iter().enumerate() {
-                    if !req.is_empty() {
-                        println!("Request {}: type=0x{:02x}, len={}", i, req[0], req.len());
-                    } else {
-                        println!("Request {}: EMPTY!", i);
-                    }
+        if let Ok(Some(reqs)) = requests {
+            println!("\nGot {} requests", reqs.len());
+            for (i, req) in reqs.iter().enumerate() {
+                if !req.is_empty() {
+                    println!("  Request {}: type=0x{:02x}, len={}", i, req[0], req.len());
                 }
-            }
-            None => {
-                println!("No execution requests found for block {}", block_number);
             }
         }
     }

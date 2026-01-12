@@ -23,7 +23,7 @@ reth-primitives-traits.workspace = true
 reth-tracing.workspace = true
 
 # alloy
-alloy-eips.workspace = true
+alloy-eips = { workspace = true, features = ["ssz"] }
 alloy-json-rpc.workspace = true
 alloy-primitives.workspace = true
 alloy-provider = { workspace = true, features = ["engine-api", "reqwest-rustls-tls"], default-features = false }
@@ -54,6 +54,9 @@ serde_json.workspace = true
 async-trait.workspace = true
 futures.workspace = true
 tokio = { workspace = true, features = ["sync", "macros", "time", "rt-multi-thread"] }
+
+# ssz
+ssz = { version = "0.9.0", package = "ethereum_ssz" }
 
 # misc
 clap = { workspace = true, features = ["derive", "env"] }
