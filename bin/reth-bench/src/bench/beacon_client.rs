@@ -179,19 +179,33 @@ impl BeaconClient {
             return Ok(None);
         };
 
-        // Combine all requests into a single Requests object with type prefixes.
-        // Beacon API returns structured objects, engine API expects SSZ-encoded bytes
-        // with type prefix.
+        // Build requests in EIP-7685 format: one entry per type containing
+        // type byte + concatenated SSZ-encoded requests of that type.
+        // Must be ordered by type and no duplicate types.
         let mut all_requests = Requests::default();
-        for deposit in &execution_requests.deposits {
-            all_requests.push_request_with_type(DEPOSIT_REQUEST_TYPE, deposit.as_ssz_bytes());
+
+        if !execution_requests.deposits.is_empty() {
+            let mut deposits_data = Vec::new();
+            for deposit in &execution_requests.deposits {
+                deposits_data.extend_from_slice(&deposit.as_ssz_bytes());
+            }
+            all_requests.push_request_with_type(DEPOSIT_REQUEST_TYPE, deposits_data);
         }
-        for withdrawal in &execution_requests.withdrawals {
-            all_requests.push_request_with_type(WITHDRAWAL_REQUEST_TYPE, withdrawal.as_ssz_bytes());
+
+        if !execution_requests.withdrawals.is_empty() {
+            let mut withdrawals_data = Vec::new();
+            for withdrawal in &execution_requests.withdrawals {
+                withdrawals_data.extend_from_slice(&withdrawal.as_ssz_bytes());
+            }
+            all_requests.push_request_with_type(WITHDRAWAL_REQUEST_TYPE, withdrawals_data);
         }
-        for consolidation in &execution_requests.consolidations {
-            all_requests
-                .push_request_with_type(CONSOLIDATION_REQUEST_TYPE, consolidation.as_ssz_bytes());
+
+        if !execution_requests.consolidations.is_empty() {
+            let mut consolidations_data = Vec::new();
+            for consolidation in &execution_requests.consolidations {
+                consolidations_data.extend_from_slice(&consolidation.as_ssz_bytes());
+            }
+            all_requests.push_request_with_type(CONSOLIDATION_REQUEST_TYPE, consolidations_data);
         }
 
         Ok(Some(all_requests))
