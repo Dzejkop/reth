@@ -165,18 +165,20 @@ impl BeaconClient {
             return Ok(None);
         };
 
-        // Combine all requests into a single Requests object
-        let mut all_requests = Vec::new();
+        // Combine all requests into a single Requests object with type prefixes.
+        // Beacon API returns requests without type prefixes (implicit from array),
+        // but engine API expects each request prefixed with its type byte.
+        let mut all_requests = Requests::default();
         for deposit in execution_requests.deposits {
-            all_requests.push(deposit);
+            all_requests.push_request_with_type(0x00, deposit);
         }
         for withdrawal in execution_requests.withdrawals {
-            all_requests.push(withdrawal);
+            all_requests.push_request_with_type(0x01, withdrawal);
         }
         for consolidation in execution_requests.consolidations {
-            all_requests.push(consolidation);
+            all_requests.push_request_with_type(0x02, consolidation);
         }
 
-        Ok(Some(all_requests.into()))
+        Ok(Some(all_requests))
     }
 }
