@@ -69,11 +69,15 @@ impl Command {
         info!(path = %cache_path.display(), "Loading payloads from cache");
 
         let cache = CachedPayloads::load(cache_path)?;
-        info!(blocks = cache.blocks.len(), "Loaded cached payloads");
+        info!(
+            blocks = cache.blocks.len(),
+            is_optimism = cache.is_optimism,
+            "Loaded cached payloads"
+        );
 
-        // We still need the auth provider for engine API calls
-        let BenchContext { auth_provider, is_optimism, .. } =
-            BenchContext::new(&self.benchmark, self.rpc_url.clone().unwrap_or_default()).await?;
+        // Use is_optimism from cache, only need auth provider for engine API calls
+        let is_optimism = cache.is_optimism;
+        let auth_provider = BenchContext::auth_provider_only(&self.benchmark).await?;
 
         let mut results = Vec::new();
         let total_benchmark_duration = Instant::now();

@@ -31,14 +31,17 @@ pub(crate) struct CachedBlockData {
 pub(crate) struct CachedPayloads {
     /// Version of the cache format for forward compatibility.
     pub(crate) version: u32,
+    /// Whether this cache was created from an Optimism chain.
+    #[serde(default)]
+    pub(crate) is_optimism: bool,
     /// Cached block data.
     pub(crate) blocks: Vec<CachedBlockData>,
 }
 
 impl CachedPayloads {
     /// Creates a new empty cache.
-    pub(crate) const fn new() -> Self {
-        Self { version: CACHE_VERSION, blocks: Vec::new() }
+    pub(crate) const fn new(is_optimism: bool) -> Self {
+        Self { version: CACHE_VERSION, is_optimism, blocks: Vec::new() }
     }
 
     /// Loads cached payloads from a file.

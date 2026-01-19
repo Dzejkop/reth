@@ -7,6 +7,7 @@ use crate::bench::{
     beacon_client::BeaconClient,
     cached_payload::{CachedBlockData, CachedPayloads},
 };
+use alloy_primitives::address;
 use alloy_provider::{network::AnyNetwork, Provider, RootProvider};
 use alloy_rpc_client::ClientBuilder;
 use alloy_transport::layers::RetryBackoffLayer;
@@ -66,7 +67,16 @@ impl Command {
         let beacon_url = Url::parse(&self.beacon_api_url)?;
         let beacon_client = BeaconClient::new(beacon_url).await?;
 
-        let mut cache = CachedPayloads::new();
+        // Detect Optimism by checking code at a predeploy address
+        let is_optimism = !block_provider
+            .get_code_at(address!("0x420000000000000000000000000000000000000F"))
+            .await?
+            .is_empty();
+        if is_optimism {
+            info!("Detected Optimism chain");
+        }
+
+        let mut cache = CachedPayloads::new(is_optimism);
         let total_blocks = self.to - self.from + 1;
 
         for block_number in self.from..=self.to {

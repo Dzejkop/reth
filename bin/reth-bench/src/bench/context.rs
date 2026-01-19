@@ -34,6 +34,28 @@ pub(crate) struct BenchContext {
 }
 
 impl BenchContext {
+    /// Creates just the authenticated provider for engine API calls.
+    ///
+    /// Use this when you only need the auth provider (e.g., when using cached payloads).
+    pub(crate) async fn auth_provider_only(
+        bench_args: &BenchmarkArgs,
+    ) -> eyre::Result<RootProvider<AnyNetwork>> {
+        let auth_jwt = bench_args
+            .auth_jwtsecret
+            .clone()
+            .ok_or_else(|| eyre::eyre!("--jwt-secret must be provided for authenticated RPC"))?;
+
+        let jwt = std::fs::read_to_string(auth_jwt)?;
+        let jwt = JwtSecret::from_hex(jwt)?;
+
+        let auth_url = Url::parse(&bench_args.engine_rpc_url)?;
+
+        info!("Connecting to Engine RPC at {} for replay", auth_url);
+        let auth_transport = AuthenticatedTransportConnect::new(auth_url, jwt);
+        let client = ClientBuilder::default().connect_with(auth_transport).await?;
+        Ok(RootProvider::<AnyNetwork>::new(client))
+    }
+
     /// This is the initialization code for most benchmarks, taking in a [`BenchmarkArgs`] and
     /// returning the providers needed to run a benchmark.
     pub(crate) async fn new(bench_args: &BenchmarkArgs, rpc_url: String) -> eyre::Result<Self> {
