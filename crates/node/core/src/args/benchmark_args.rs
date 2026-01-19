@@ -49,22 +49,12 @@ pub struct BenchmarkArgs {
     #[arg(long, short, value_name = "BENCHMARK_OUTPUT", verbatim_doc_comment)]
     pub output: Option<PathBuf>,
 
-    /// Send full execution requests instead of just the requests hash in engine_newPayloadV4.
+    /// Path to a cached payloads file created by the `prefetch` command.
     ///
-    /// By default, reth-bench sends only the requests hash. Enable this flag to send the full
-    /// requests array, which is required when the target node does not have
-    /// `--engine.accept-execution-requests-hash` enabled.
-    ///
-    /// Requires --beacon-api-url to fetch execution requests from the beacon chain.
-    #[arg(long, verbatim_doc_comment, requires = "beacon_api_url")]
-    pub full_requests: bool,
-
-    /// Beacon API URL for fetching execution requests when --full-requests is enabled.
-    ///
-    /// The beacon API is used to fetch the full execution requests data from beacon blocks,
-    /// since the execution layer only stores the requests hash.
-    #[arg(long, value_name = "BEACON_API_URL", verbatim_doc_comment)]
-    pub beacon_api_url: Option<String>,
+    /// When provided, blocks and execution requests are loaded from this file instead of
+    /// fetching from RPC. This enables offline benchmarking with full execution requests.
+    #[arg(long, value_name = "PAYLOAD_CACHE", verbatim_doc_comment)]
+    pub payload_cache: Option<PathBuf>,
 }
 
 #[cfg(test)]
@@ -90,15 +80,13 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_full_requests_flag() {
+    fn test_parse_payload_cache() {
         let args = CommandParser::<BenchmarkArgs>::parse_from([
             "reth-bench",
-            "--full-requests",
-            "--beacon-api-url",
-            "http://localhost:5052",
+            "--payload-cache",
+            "/path/to/cache.json",
         ])
         .args;
-        assert!(args.full_requests);
-        assert_eq!(args.beacon_api_url, Some("http://localhost:5052".to_string()));
+        assert_eq!(args.payload_cache, Some(PathBuf::from("/path/to/cache.json")));
     }
 }

@@ -11,11 +11,8 @@ use alloy_transport::layers::RetryBackoffLayer;
 use eyre::{Context, OptionExt};
 use reqwest::Url;
 use reth_node_core::args::BenchmarkArgs;
-use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
-use tracing::{info, warn};
-
-pub(crate) use super::beacon_client::BeaconClient;
+use tracing::info;
 
 /// This is intended to be used by benchmarks that replay blocks from an RPC.
 ///
@@ -34,8 +31,6 @@ pub(crate) struct BenchContext {
     pub(crate) next_block: u64,
     /// Whether the chain is an OP rollup.
     pub(crate) is_optimism: bool,
-    /// Optional beacon client for fetching execution requests.
-    pub(crate) beacon_client: Option<Arc<BeaconClient>>,
 }
 
 impl BenchContext {
@@ -148,24 +143,7 @@ impl BenchContext {
 
         let next_block = first_block.header.number + 1;
 
-        // Initialize beacon client if URL is provided
-        let beacon_client = match &bench_args.beacon_api_url {
-            Some(url) => {
-                let beacon_url = Url::parse(url)?;
-                info!("Using Beacon API at {} for fetching execution requests", beacon_url);
-                Some(Arc::new(BeaconClient::new(beacon_url).await?))
-            }
-            None => None,
-        };
-
-        Ok(Self {
-            auth_provider,
-            block_provider,
-            benchmark_mode,
-            next_block,
-            is_optimism,
-            beacon_client,
-        })
+        Ok(Self { auth_provider, block_provider, benchmark_mode, next_block, is_optimism })
     }
 }
 
@@ -182,13 +160,15 @@ pub(crate) struct BlockData {
 ///
 /// For each block, also fetches approximate safe (head - 32) and finalized (head - 64) block
 /// hashes for forkchoice state construction.
+///
+/// Note: `execution_requests` will always be `None` when fetching from RPC. To include execution
+/// requests, use the `prefetch` command to create a cache file with beacon API data.
 pub(crate) async fn fetch_blocks(
     block_provider: RootProvider<AnyNetwork>,
     benchmark_mode: BenchMode,
     mut next_block: u64,
     sender: mpsc::Sender<BlockData>,
     error_sender: oneshot::Sender<eyre::Report>,
-    beacon_client: Option<Arc<BeaconClient>>,
 ) {
     while benchmark_mode.contains(next_block) {
         let block_res = block_provider
@@ -224,22 +204,6 @@ pub(crate) async fn fetch_blocks(
             Ok(None) | Err(_) => head_block_hash,
         };
 
-        // Fetch execution requests from beacon API if available
-        let execution_requests = if let Some(ref beacon) = beacon_client {
-            match beacon.get_execution_requests(block.header.number, block.header.timestamp).await {
-                Ok(requests) => requests,
-                Err(e) => {
-                    warn!(
-                        block_number = block.header.number,
-                        "Failed to fetch execution requests: {e}"
-                    );
-                    None
-                }
-            }
-        } else {
-            None
-        };
-
         next_block += 1;
         if let Err(e) = sender
             .send(BlockData {
@@ -247,7 +211,7 @@ pub(crate) async fn fetch_blocks(
                 head_block_hash,
                 safe_block_hash,
                 finalized_block_hash,
-                execution_requests,
+                execution_requests: None,
             })
             .await
         {

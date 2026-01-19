@@ -133,10 +133,13 @@ where
     }
 }
 
+/// Converts an RPC block to a new payload request.
+///
+/// If `execution_requests` is `Some`, sends the full requests array (for nodes without
+/// `--engine.accept-execution-requests-hash`). If `None`, sends only the requests hash.
 pub(crate) fn block_to_new_payload(
     block: AnyRpcBlock,
     is_optimism: bool,
-    full_requests: bool,
     execution_requests: Option<Requests>,
 ) -> eyre::Result<(EngineApiMessageVersion, serde_json::Value)> {
     let block = block
@@ -170,16 +173,9 @@ pub(crate) fn block_to_new_payload(
                         ))?,
                     )
                 } else {
-                    let requests = if full_requests {
-                        // Use execution requests from beacon API if provided
-                        if let Some(ref reqs) = execution_requests {
-                            serde_json::to_value(reqs)?
-                        } else {
-                            // Beacon API didn't return requests - send empty array.
-                            // This happens when the beacon block has no execution_requests
-                            // (e.g., pre-Electra or empty requests for that block).
-                            serde_json::to_value(Requests::default())?
-                        }
+                    // Use full execution requests if provided (from cache), otherwise use hash
+                    let requests = if let Some(ref reqs) = execution_requests {
+                        serde_json::to_value(reqs)?
                     } else {
                         serde_json::to_value(prague.requests.requests_hash())?
                     };
