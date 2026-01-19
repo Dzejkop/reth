@@ -7,6 +7,7 @@ use crate::bench::{
     beacon_client::BeaconClient,
     cached_payload::{CachedBlockData, CachedPayloads},
 };
+use alloy_eips::eip7685::Requests;
 use alloy_primitives::address;
 use alloy_provider::{network::AnyNetwork, Provider, RootProvider};
 use alloy_rpc_client::ClientBuilder;
@@ -105,13 +106,13 @@ impl Command {
                 .map(|b| b.header.hash)
                 .unwrap_or(head_block_hash);
 
-            // Fetch execution requests from beacon API
+            // Fetch execution requests from beacon API (empty for Optimism or pre-Prague)
             let execution_requests =
                 match beacon_client.get_execution_requests(block_number, timestamp).await {
-                    Ok(requests) => requests,
+                    Ok(requests) => requests.unwrap_or_default(),
                     Err(e) => {
                         warn!(block_number, "Failed to fetch execution requests: {e}");
-                        None
+                        Requests::default()
                     }
                 };
 

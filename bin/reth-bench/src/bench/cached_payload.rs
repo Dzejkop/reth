@@ -21,9 +21,9 @@ pub(crate) struct CachedBlockData {
     pub(crate) safe_block_hash: B256,
     /// Finalized block hash for forkchoice state.
     pub(crate) finalized_block_hash: B256,
-    /// Execution requests from beacon API (if available).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) execution_requests: Option<Requests>,
+    /// Execution requests from beacon API. Empty for Optimism or pre-Prague blocks.
+    #[serde(default)]
+    pub(crate) execution_requests: Requests,
 }
 
 /// Container for cached payloads with version information.
