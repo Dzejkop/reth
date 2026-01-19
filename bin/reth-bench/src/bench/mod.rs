@@ -6,10 +6,12 @@ use reth_node_core::args::LogArgs;
 use reth_tracing::FileWorkerGuard;
 
 mod beacon_client;
+pub(crate) mod cached_payload;
 mod context;
 mod new_payload_fcu;
 mod new_payload_only;
 mod output;
+mod prefetch;
 mod send_payload;
 
 /// `reth bench` command
@@ -42,6 +44,13 @@ pub enum Subcommands {
     /// `cast block latest --full --json | reth-bench send-payload --rpc-url localhost:5000
     /// --jwt-secret $(cat ~/.local/share/reth/mainnet/jwt.hex)`
     SendPayload(send_payload::Command),
+
+    /// Pre-fetch blocks and execution requests to a JSON file for offline benchmarking.
+    ///
+    /// This command fetches blocks from an RPC endpoint and execution requests from a beacon API,
+    /// saving them to a cache file that can be used with `--payload-cache` in other benchmark
+    /// commands.
+    Prefetch(prefetch::Command),
 }
 
 impl BenchmarkCommand {
@@ -54,6 +63,7 @@ impl BenchmarkCommand {
             Subcommands::NewPayloadFcu(command) => command.execute(ctx).await,
             Subcommands::NewPayloadOnly(command) => command.execute(ctx).await,
             Subcommands::SendPayload(command) => command.execute(ctx).await,
+            Subcommands::Prefetch(command) => command.execute(ctx).await,
         }
     }
 
