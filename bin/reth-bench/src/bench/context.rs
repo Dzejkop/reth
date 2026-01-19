@@ -175,7 +175,8 @@ pub(crate) struct BlockData {
     pub(crate) head_block_hash: B256,
     pub(crate) safe_block_hash: B256,
     pub(crate) finalized_block_hash: B256,
-    pub(crate) execution_requests: Option<Requests>,
+    /// Execution requests. Empty when fetched from RPC (use prefetch for post-Prague blocks).
+    pub(crate) execution_requests: Requests,
 }
 
 /// Fetches blocks from RPC and sends them through the channel.
@@ -183,8 +184,8 @@ pub(crate) struct BlockData {
 /// For each block, also fetches approximate safe (head - 32) and finalized (head - 64) block
 /// hashes for forkchoice state construction.
 ///
-/// Note: `execution_requests` will always be `None` when fetching from RPC. To include execution
-/// requests, use the `prefetch` command to create a cache file with beacon API data.
+/// Note: `execution_requests` will always be empty when fetching from RPC. For post-Prague blocks,
+/// use the `prefetch` command to create a cache file with beacon API data.
 pub(crate) async fn fetch_blocks(
     block_provider: RootProvider<AnyNetwork>,
     benchmark_mode: BenchMode,
@@ -233,7 +234,7 @@ pub(crate) async fn fetch_blocks(
                 head_block_hash,
                 safe_block_hash,
                 finalized_block_hash,
-                execution_requests: None,
+                execution_requests: Requests::default(),
             })
             .await
         {

@@ -135,12 +135,12 @@ where
 
 /// Converts an RPC block to a new payload request.
 ///
-/// If `execution_requests` is `Some`, sends the full requests array (for nodes without
-/// `--engine.accept-execution-requests-hash`). If `None`, sends only the requests hash.
+/// Sends the full execution requests array. For post-Prague blocks, use the prefetch command
+/// to cache blocks with beacon API data to get accurate execution requests.
 pub(crate) fn block_to_new_payload(
     block: AnyRpcBlock,
     is_optimism: bool,
-    execution_requests: Option<Requests>,
+    execution_requests: Requests,
 ) -> eyre::Result<(EngineApiMessageVersion, serde_json::Value)> {
     let block = block
         .into_inner()
@@ -158,7 +158,7 @@ pub(crate) fn block_to_new_payload(
         ExecutionPayload::V3(payload) => {
             let cancun = sidecar.cancun().unwrap();
 
-            if let Some(prague) = sidecar.prague() {
+            if sidecar.prague().is_some() {
                 if is_optimism {
                     (
                         EngineApiMessageVersion::V4,
@@ -173,19 +173,13 @@ pub(crate) fn block_to_new_payload(
                         ))?,
                     )
                 } else {
-                    // Use full execution requests if provided (from cache), otherwise use hash
-                    let requests = if let Some(ref reqs) = execution_requests {
-                        serde_json::to_value(reqs)?
-                    } else {
-                        serde_json::to_value(prague.requests.requests_hash())?
-                    };
                     (
                         EngineApiMessageVersion::V4,
                         serde_json::to_value((
                             payload,
                             cancun.versioned_hashes.clone(),
                             cancun.parent_beacon_block_root,
-                            requests,
+                            &execution_requests,
                         ))?,
                     )
                 }

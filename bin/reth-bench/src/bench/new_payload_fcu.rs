@@ -97,7 +97,7 @@ impl Command {
             };
 
             let (version, params) =
-                block_to_new_payload(block, is_optimism, Some(cached_block.execution_requests))?;
+                block_to_new_payload(block, is_optimism, cached_block.execution_requests)?;
             let start = Instant::now();
             call_new_payload(&auth_provider, version, params).await?;
 
